@@ -4,8 +4,10 @@ import { Box, Tabs as MuiTabs, Tab as MuiTab, Container } from '@mui/material';
 import { connect } from 'react-redux';
 
 import DataTable from 'components/DataTable/DataTable';
+import TestTab from 'components/TestTab/TestTab';
 import { baseTabs } from 'components/Tabs/Tabs.constants';
 import { INotificationState, notificationActions } from 'redux/slice/notification.slice';
+import { IUiState, uiActions } from 'redux/slice/ui.slice';
 import { IUrlState, urlActions } from 'redux/slice/url.slice';
 import { IRootState } from 'redux/store';
 import { ITab } from 'types/tab.types';
@@ -19,7 +21,9 @@ interface IStateProps {
 interface ITabs extends IStateProps {
   currentTabIndexFromQuery: number;
   notification: INotificationState;
+  showTestTab: boolean;
   setNotification: (payload: INotificationState) => void;
+  setUi: (payload: Partial<IUiState>) => void;
   setUrl: (payload: IUrlState) => void;
   tabs: ITab[];
 }
@@ -38,11 +42,28 @@ function TabLabel({ hasNotification, title }: ITabLabel) {
   );
 }
 
-function Tabs({ currentTabIndexFromQuery, notification, setNotification, setUrl, tabs }: ITabs) {
+function Tabs({
+  currentTabIndexFromQuery,
+  notification,
+  showTestTab,
+  setNotification,
+  setUi,
+  setUrl,
+  tabs,
+}: ITabs) {
   const [currentTabIndex, setCurrentTabIndex] = useState(currentTabIndexFromQuery);
+  /** Once Run Test is opened, keep TestTab mounted so form/results state survives tab switches. */
+  const [keepTestTabMounted, setKeepTestTabMounted] = useState(false);
+
+  useEffect(() => {
+    if (showTestTab) {
+      setKeepTestTabMounted(true);
+    }
+  }, [showTestTab]);
 
   const onTabChange = (_: React.SyntheticEvent, index: number) => {
     const tab = tabs[index].key;
+    setUi({ showTestTab: false });
 
     if (notification[tab]) {
       setNotification({ [tab]: false });
@@ -63,7 +84,7 @@ function Tabs({ currentTabIndexFromQuery, notification, setNotification, setUrl,
         <MuiTabs
           onChange={onTabChange}
           scrollButtons='auto'
-          value={currentTabIndex}
+          value={showTestTab ? false : currentTabIndex}
           variant='scrollable'
         >
           {tabs.map(({ key: tabKey, title }, index) => (
@@ -74,10 +95,16 @@ function Tabs({ currentTabIndexFromQuery, notification, setNotification, setUrl,
           ))}
         </MuiTabs>
       </Box>
-      {tabs.map(
-        ({ component: Component = DataTable }, index) =>
-          currentTabIndex === index && <Component key={`tabpabel-${index}`} />,
+      {keepTestTabMounted && (
+        <Box sx={{ display: showTestTab ? 'block' : 'none' }}>
+          <TestTab />
+        </Box>
       )}
+      {!showTestTab &&
+        tabs.map(
+          ({ component: Component = DataTable }, index) =>
+            currentTabIndex === index && <Component key={`tabpabel-${index}`} />,
+        )}
     </Container>
   );
 }
@@ -88,6 +115,7 @@ const storeConnector = (
 ) => {
   const {
     notification,
+    ui: { showTestTab },
     swarm: { extendedTabs: extendedTabsFromState },
     url: { query: urlQuery },
   } = state;
@@ -105,6 +133,7 @@ const storeConnector = (
 
   return {
     notification,
+    showTestTab,
     tabs: tabsToDisplay,
     currentTabIndexFromQuery: tabIndexFromQuery > -1 ? tabIndexFromQuery : 0,
   };
@@ -112,6 +141,7 @@ const storeConnector = (
 
 const actionCreator = {
   setNotification: notificationActions.setNotification,
+  setUi: uiActions.setUi,
   setUrl: urlActions.setUrl,
 };
 
