@@ -58,6 +58,8 @@ export default function LineChart<ChartType extends IBaseChartType>({
   xAxis,
   grid,
   scatterplot,
+  legend,
+  height = 300,
   shouldReplaceMergeLines = false,
   isDarkMode = false,
 }: ILineChartProps<ChartType>) {
@@ -84,6 +86,7 @@ export default function LineChart<ChartType extends IBaseChartType>({
         xAxis,
         grid,
         scatterplot,
+        legend,
       }),
     );
     initChart.on('datazoom', onChartZoom(initChart));
@@ -155,5 +158,5 @@ export default function LineChart<ChartType extends IBaseChartType>({
     }
   }, [lines]);
 
-  return <div ref={chartContainer} style={{ width: '100%', height: '300px' }}></div>;
+  return <div ref={chartContainer} style={{ width: '100%', height }}></div>;
 }

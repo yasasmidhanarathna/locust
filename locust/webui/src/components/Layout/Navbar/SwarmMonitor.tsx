@@ -4,13 +4,16 @@ import { connect } from 'react-redux';
 import { SWARM_STATE } from 'constants/swarm';
 import { IUiState, uiActions } from 'redux/slice/ui.slice';
 import { IRootState } from 'redux/store';
+import { urlActions } from 'redux/slice/url.slice';
 import { ISwarmState } from 'types/swarm.types';
+import { pushQuery } from 'utils/url';
 
 interface ISwarmMonitor
   extends Pick<ISwarmState, 'isDistributed' | 'host' | 'state' | 'workerCount'>,
   Pick<IUiState, 'totalRps' | 'failRatio' | 'userCount'> { }
 interface IActionProps {
   setUi: (payload: Partial<IUiState>) => void;
+  setUrl: (payload: { query: { [key: string]: string } | null }) => void;
 }
 
 function SwarmMonitor({
@@ -22,10 +25,19 @@ function SwarmMonitor({
   userCount,
   workerCount,
   setUi,
+  setUrl,
 }: ISwarmMonitor & IActionProps) {
   const onTestClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     setUi({ showTestTab: true });
+  };
+
+  const onModelResourceMonitoringClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const tab = 'resource-monitoring';
+    setUi({ showTestTab: false });
+    pushQuery({ tab });
+    setUrl({ query: { tab } });
   };
 
   return (
@@ -62,6 +74,16 @@ function SwarmMonitor({
           sx={{ color: 'inherit', fontWeight: 'bold', textDecoration: 'none', backgroundColor: '#e68508', padding: '4px 8px', borderRadius: '4px' }}
         >
           Run Test
+        </Link>
+      </Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: { md: 'center' } }}>
+        <Link
+          component='button'
+          type='button'
+          onClick={onModelResourceMonitoringClick}
+          sx={{ color: 'inherit', fontWeight: 'bold', textDecoration: 'none', backgroundColor: '#1976d2', padding: '4px 8px', borderRadius: '4px' }}
+        >
+          Model Resource Monitoring
         </Link>
       </Box>
       {(state === SWARM_STATE.RUNNING || state === SWARM_STATE.SPAWNING) && (
@@ -117,6 +139,7 @@ const storeConnector = ({
 
 const actionCreator = {
   setUi: uiActions.setUi,
+  setUrl: urlActions.setUrl,
 };
 
 export default connect(storeConnector, actionCreator)(SwarmMonitor);

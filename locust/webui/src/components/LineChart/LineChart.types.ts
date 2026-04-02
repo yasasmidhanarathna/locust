@@ -17,6 +17,10 @@ export interface ILineChart<ChartType> {
   grid?: any;
   xAxis?: any;
   scatterplot?: boolean;
+  /** Merged into ECharts `legend` (e.g. `{ type: 'scroll' }` for many series). */
+  legend?: Record<string, unknown>;
+  /** Chart height in pixels (default 300). */
+  height?: number;
 }
 
 export interface ILineChartZoomEvent {

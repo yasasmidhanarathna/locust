@@ -18,11 +18,12 @@ interface IDashboard {
   isModalOpen?: boolean;
   swarmState: SwarmState;
   showTestTab: boolean;
+  selectedTab?: string;
   extendedTabs?: ITab[];
   tabs?: ITab[];
 }
 
-function Dashboard({ swarmState, showTestTab, tabs, extendedTabs }: IDashboard) {
+function Dashboard({ swarmState, showTestTab, selectedTab, tabs, extendedTabs }: IDashboard) {
   useFetchStats();
   useFetchWorkerCount();
   useLogViewer();
@@ -33,7 +34,7 @@ function Dashboard({ swarmState, showTestTab, tabs, extendedTabs }: IDashboard) 
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Layout>
-        {swarmState === SWARM_STATE.READY && !showTestTab ? (
+        {swarmState === SWARM_STATE.READY && !showTestTab && selectedTab !== 'resource-monitoring' ? (
           <SwarmForm />
         ) : (
           <Tabs extendedTabs={extendedTabs} tabs={tabs} />
@@ -43,9 +44,10 @@ function Dashboard({ swarmState, showTestTab, tabs, extendedTabs }: IDashboard) 
   );
 }
 
-const storeConnector = ({ swarm: { state }, ui: { showTestTab } }: IRootState) => ({
+const storeConnector = ({ swarm: { state }, ui: { showTestTab }, url: { query } }: IRootState) => ({
   swarmState: state,
   showTestTab,
+  selectedTab: query?.tab,
 });
 
 export default connect(storeConnector)(Dashboard);

@@ -1,6 +1,7 @@
 import type {
   ECharts,
   DefaultLabelFormatterCallbackParams,
+  LegendComponentOption,
   LineSeriesOption,
   YAXisComponentOption,
   ScatterSeriesOption,
@@ -81,8 +82,10 @@ export const createOptions = <ChartType extends Pick<ICharts, 'time'>>({
   xAxis,
   grid,
   scatterplot,
+  legend: legendOverride,
 }: ILineChart<ChartType>) => ({
-  title: { text: title },
+  /** Centered title on its own row so legend (often `top: 25+`) does not sit on the same line. */
+  title: { text: title, left: 'center', top: 8 },
   tooltip: {
     trigger: 'axis',
     formatter: (params?: ILineChartTooltipFormatterParams[] | null) => {
@@ -145,9 +148,15 @@ export const createOptions = <ChartType extends Pick<ICharts, 'time'>>({
       },
     },
   },
-  legend: {
-    top: 25,
-  },
+  legend: (() => {
+    const ov = legendOverride ?? {};
+    const merged: Record<string, unknown> = { top: 36, ...ov };
+    /** Prefer bottom legend when callers set `bottom` (avoids conflicting top + bottom). */
+    if (ov.bottom != null) {
+      delete merged.top;
+    }
+    return merged as LegendComponentOption;
+  })(),
 });
 
 export const createMarkLine = <ChartType extends Pick<ICharts, 'markers'>>(charts: ChartType) => ({

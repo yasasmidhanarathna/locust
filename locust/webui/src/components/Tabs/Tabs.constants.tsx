@@ -6,6 +6,7 @@ import StatsTable from 'components/StatsTable/StatsTableContainer';
 import SwarmCharts from 'components/SwarmCharts/SwarmChartsContainer';
 import SwarmRatiosTab from 'components/SwarmRatiosTab/SwarmRatiosTab';
 import TestTab from 'components/TestTab/TestTab';
+import ModelResourceMonitoringTab from 'components/ModelResourceMonitoringTab/ModelResourceMonitoringTab';
 import WorkersTable from 'components/WorkersTable/WorkersTable';
 import { LOG_VIEWER_KEY } from 'constants/logs';
 import { IRootState } from 'redux/store';
@@ -31,6 +32,11 @@ export const tabConfig = {
     component: TestTab,
     key: 'test',
     title: 'Test',
+  },
+  resourceMonitoring: {
+    component: ModelResourceMonitoringTab,
+    key: 'resource-monitoring',
+    title: 'Model Resource Monitoring',
   },
   exceptions: {
     component: ExceptionsTab,
@@ -64,6 +70,7 @@ export const baseTabs: ITab[] = [
   tabConfig.stats,
   tabConfig.charts,
   tabConfig.failures,
+  tabConfig.resourceMonitoring,
   tabConfig.exceptions,
   tabConfig.ratios,
   tabConfig.reports,
