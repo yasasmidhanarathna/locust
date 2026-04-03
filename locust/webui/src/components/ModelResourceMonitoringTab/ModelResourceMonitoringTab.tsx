@@ -2,11 +2,13 @@ import { useMemo, useState } from 'react';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
     Alert,
     Box,
     Button,
     CircularProgress,
+    Collapse,
     FormControl,
     InputLabel,
     MenuItem,
@@ -29,6 +31,8 @@ type TimeSeriesResponse = unknown;
 type MonitoringResponse = {
     memoryBytesUsed?: TimeSeriesResponse;
     cpuUtilization?: TimeSeriesResponse;
+    acceleratorDutyCycle?: TimeSeriesResponse;
+    acceleratorMemoryBytes?: TimeSeriesResponse;
     replicas?: TimeSeriesResponse;
     targetReplicas?: TimeSeriesResponse;
     networkReceivedBytes?: TimeSeriesResponse;
@@ -37,8 +41,6 @@ type MonitoringResponse = {
 
 const DEFAULT_PROJECT_ID = 'fzo-edu-ds';
 const DEFAULT_ENDPOINT_ID = '8045470177820672000';
-const DEFAULT_START_TIME = '2026-04-01T01:00:00Z';
-const DEFAULT_END_TIME = '2026-04-02T23:30:00Z';
 
 const TIMEZONE_OPTIONS: string[] = (
     typeof Intl !== 'undefined' && typeof (Intl as any).supportedValuesOf === 'function'
@@ -50,6 +52,16 @@ function utcInstantToApiIso(d: Dayjs): string {
     return d.utc().format('YYYY-MM-DDTHH:mm:ss[Z]');
 }
 
+/** Default interval: last 1 hour ending at load time (UTC for the Monitoring API). */
+function getDefaultMonitoringIntervalUtc(): { startUtc: string; endUtc: string } {
+    const end = dayjs.utc();
+    const start = end.subtract(1, 'hour');
+    return {
+        startUtc: utcInstantToApiIso(start),
+        endUtc: utcInstantToApiIso(end),
+    };
+}
+
 const DEFAULT_AUTH = 'Bearer {Paste the Token}';
 
 const MEMORY_METRIC_FILTER = (endpointId: string) =>
@@ -57,6 +69,12 @@ const MEMORY_METRIC_FILTER = (endpointId: string) =>
 
 const CPU_METRIC_FILTER = (endpointId: string) =>
     `resource.type="aiplatform.googleapis.com/Endpoint" AND metric.type="aiplatform.googleapis.com/prediction/online/cpu/utilization" AND resource.labels.endpoint_id="${endpointId}"`;
+
+const ACCELERATOR_DUTY_CYCLE_METRIC_FILTER = (endpointId: string) =>
+    `resource.type="aiplatform.googleapis.com/Endpoint" AND metric.type="aiplatform.googleapis.com/prediction/online/accelerator/duty_cycle" AND resource.labels.endpoint_id="${endpointId}"`;
+
+const ACCELERATOR_MEMORY_BYTES_METRIC_FILTER = (endpointId: string) =>
+    `resource.type="aiplatform.googleapis.com/Endpoint" AND metric.type="aiplatform.googleapis.com/prediction/online/accelerator/memory/bytes_used" AND resource.labels.endpoint_id="${endpointId}"`;
 
 const REPLICAS_METRIC_FILTER = (endpointId: string) =>
     `resource.type="aiplatform.googleapis.com/Endpoint" AND metric.type="aiplatform.googleapis.com/prediction/online/replicas" AND resource.labels.endpoint_id="${endpointId}"`;
@@ -69,6 +87,49 @@ const NETWORK_RECEIVED_BYTES_METRIC_FILTER = (endpointId: string) =>
 
 const NETWORK_SENT_BYTES_METRIC_FILTER = (endpointId: string) =>
     `resource.type="aiplatform.googleapis.com/Endpoint" AND metric.type="aiplatform.googleapis.com/prediction/online/network/sent_bytes_count" AND resource.labels.endpoint_id="${endpointId}"`;
+
+const MONITORING_JSON_PRE_SX = {
+    m: 0,
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-word' as const,
+    fontFamily: 'monospace',
+    fontSize: '12px',
+    maxHeight: 220,
+    overflow: 'auto',
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    borderRadius: 1,
+    p: 1,
+};
+
+function CollapsibleRawJson({ data }: { data: unknown }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <Box>
+            <Button
+                variant='text'
+                size='small'
+                aria-expanded={open}
+                onClick={() => setOpen(o => !o)}
+                endIcon={
+                    <ExpandMoreIcon
+                        sx={{
+                            transition: 'transform 0.2s',
+                            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+                        }}
+                    />
+                }
+                sx={{ textTransform: 'none', px: 0, minWidth: 0, color: 'text.secondary' }}
+            >
+                {open ? 'Hide raw JSON' : 'Show raw JSON'}
+            </Button>
+            <Collapse in={open}>
+                <Box component='pre' sx={MONITORING_JSON_PRE_SX}>
+                    {JSON.stringify(data ?? null, null, 2)}
+                </Box>
+            </Collapse>
+        </Box>
+    );
+}
 
 function buildMonitoringTimeSeriesUrl(
     projectId: string,
@@ -164,7 +225,8 @@ const MONITORING_LINE_COLORS = [
 
 /** Title stays top; legend at bottom so labels never overlap the chart title. */
 const MONITORING_CHART_HEIGHT = 400;
-const MONITORING_CHART_GRID = { left: 56, right: 32, top: 52, bottom: 88 };
+/** Wider left margin so Y-axis `name` (including long replica labels) is not clipped. */
+const MONITORING_CHART_GRID = { left: 96, right: 32, top: 52, bottom: 88 };
 const MONITORING_CHART_LEGEND = {
     type: 'scroll' as const,
     orient: 'horizontal' as const,
@@ -178,6 +240,15 @@ const MONITORING_CHART_LEGEND = {
     pageIconSize: 10,
     pageTextStyle: { fontSize: 10 },
 };
+
+/** Shown as ECharts Y-axis `name` (unit / meaning of the plotted values). */
+const Y_AXIS_LABEL_MEMORY = 'GiB';
+const Y_AXIS_LABEL_CPU = '%';
+/** Duty cycle is a 0–1 fraction in the API; chart scales to percent like CPU. */
+const Y_AXIS_LABEL_ACCELERATOR_DUTY_CYCLE = '%';
+const Y_AXIS_LABEL_REPLICAS = 'Number of active replicas';
+const Y_AXIS_LABEL_TARGET_REPLICAS = 'Target number of replicas';
+const Y_AXIS_LABEL_NETWORK = 'GiB';
 
 function sanitizeKeyPart(s: string): string {
     const t = String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -386,6 +457,10 @@ function buildCpuMultiLineBundle(raw: any): MonitoringMultiLineBundle | null {
     return buildGenericNumericMultiLineBundle(raw, v => v * 100);
 }
 
+function buildAcceleratorDutyCycleMultiLineBundle(raw: any): MonitoringMultiLineBundle | null {
+    return buildGenericNumericMultiLineBundle(raw, v => v * 100);
+}
+
 function buildReplicaCountMultiLineBundle(raw: any): MonitoringMultiLineBundle | null {
     return buildGenericNumericMultiLineBundle(raw, v => v);
 }
@@ -393,9 +468,10 @@ function buildReplicaCountMultiLineBundle(raw: any): MonitoringMultiLineBundle |
 export default function ModelResourceMonitoringTab() {
     const [projectId, setProjectId] = useState(DEFAULT_PROJECT_ID);
     const [endpointId, setEndpointId] = useState(DEFAULT_ENDPOINT_ID);
-    /** Stored as UTC RFC3339 (`...Z`) for Monitoring API and URLs. */
-    const [startUtc, setStartUtc] = useState(DEFAULT_START_TIME);
-    const [endUtc, setEndUtc] = useState(DEFAULT_END_TIME);
+    /** Stored as UTC RFC3339 (`...Z`) for Monitoring API and URLs. Default: last hour ending at page load. */
+    const defaultMonitoringInterval = useMemo(() => getDefaultMonitoringIntervalUtc(), []);
+    const [startUtc, setStartUtc] = useState(defaultMonitoringInterval.startUtc);
+    const [endUtc, setEndUtc] = useState(defaultMonitoringInterval.endUtc);
     /** IANA timezone used for pickers and chart axis labels. */
     const [timezone, setTimezone] = useState<string>(() =>
         typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC',
@@ -415,6 +491,18 @@ export default function ModelResourceMonitoringTab() {
 
     const cpuUrl = useMemo(
         () => buildMonitoringTimeSeriesUrl(projectId, CPU_METRIC_FILTER(endpointId), startUtc, endUtc),
+        [endpointId, endUtc, projectId, startUtc],
+    );
+
+    const acceleratorDutyCycleUrl = useMemo(
+        () =>
+            buildMonitoringTimeSeriesUrl(projectId, ACCELERATOR_DUTY_CYCLE_METRIC_FILTER(endpointId), startUtc, endUtc),
+        [endpointId, endUtc, projectId, startUtc],
+    );
+
+    const acceleratorMemoryUrl = useMemo(
+        () =>
+            buildMonitoringTimeSeriesUrl(projectId, ACCELERATOR_MEMORY_BYTES_METRIC_FILTER(endpointId), startUtc, endUtc),
         [endpointId, endUtc, projectId, startUtc],
     );
 
@@ -499,6 +587,8 @@ export default function ModelResourceMonitoringTab() {
             const [
                 memoryBytesUsed,
                 cpuUtilization,
+                acceleratorDutyCycle,
+                acceleratorMemoryBytes,
                 replicas,
                 targetReplicas,
                 networkReceivedBytes,
@@ -506,6 +596,8 @@ export default function ModelResourceMonitoringTab() {
             ] = await Promise.all([
                 fetchMonitoringTimeSeriesAllPages(memoryUrl, authorization),
                 fetchMonitoringTimeSeriesAllPages(cpuUrl, authorization),
+                fetchMonitoringTimeSeriesAllPages(acceleratorDutyCycleUrl, authorization),
+                fetchMonitoringTimeSeriesAllPages(acceleratorMemoryUrl, authorization),
                 fetchMonitoringTimeSeriesAllPages(replicasUrl, authorization),
                 fetchMonitoringTimeSeriesAllPages(targetReplicasUrl, authorization),
                 fetchMonitoringTimeSeriesAllPages(networkReceivedUrl, authorization),
@@ -515,6 +607,8 @@ export default function ModelResourceMonitoringTab() {
             setResponse({
                 memoryBytesUsed,
                 cpuUtilization,
+                acceleratorDutyCycle,
+                acceleratorMemoryBytes,
                 replicas,
                 targetReplicas,
                 networkReceivedBytes,
@@ -537,6 +631,16 @@ export default function ModelResourceMonitoringTab() {
         [response?.cpuUtilization],
     );
 
+    const acceleratorDutyCycleChart = useMemo(
+        () => buildAcceleratorDutyCycleMultiLineBundle(response?.acceleratorDutyCycle as any),
+        [response?.acceleratorDutyCycle],
+    );
+
+    const acceleratorMemoryChart = useMemo(
+        () => buildMemoryMultiLineBundle(response?.acceleratorMemoryBytes as any),
+        [response?.acceleratorMemoryBytes],
+    );
+
     const replicasChart = useMemo(
         () => buildReplicaCountMultiLineBundle(response?.replicas as any),
         [response?.replicas],
@@ -556,19 +660,6 @@ export default function ModelResourceMonitoringTab() {
         () => buildMemoryMultiLineBundle(response?.networkSentBytes as any),
         [response?.networkSentBytes],
     );
-
-    const jsonPreSx = {
-        m: 0,
-        whiteSpace: 'pre-wrap' as const,
-        wordBreak: 'break-word' as const,
-        fontFamily: 'monospace',
-        fontSize: '12px',
-        maxHeight: 220,
-        overflow: 'auto',
-        backgroundColor: 'rgba(0,0,0,0.03)',
-        borderRadius: 1,
-        p: 1,
-    };
 
     return (
         <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -675,9 +766,6 @@ export default function ModelResourceMonitoringTab() {
                         <Box sx={{ display: 'flex', flexDirection: 'column', rowGap: 3 }}>
                             <Box>
                                 <Typography sx={{ fontWeight: 700, mb: 1 }}>Memory (bytes_used)</Typography>
-                                <Typography variant='body2' color='text.secondary' sx={{ mb: 1, wordBreak: 'break-word' }}>
-                                    {memoryUrl}
-                                </Typography>
                                 {memoryChart && memoryChart.lines.length > 0 ? (
                                     <Box sx={{ mb: 2 }}>
                                         <LineChart<MonitoringMultiLineChartData>
@@ -686,6 +774,7 @@ export default function ModelResourceMonitoringTab() {
                                             charts={memoryChart.charts}
                                             colors={memoryChart.colors}
                                             lines={memoryChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_MEMORY}
                                             legend={MONITORING_CHART_LEGEND}
                                             grid={MONITORING_CHART_GRID}
                                             height={MONITORING_CHART_HEIGHT}
@@ -702,16 +791,11 @@ export default function ModelResourceMonitoringTab() {
                                         No memory points parsed for a chart.
                                     </Typography>
                                 )}
-                                <Box component='pre' sx={jsonPreSx}>
-                                    {JSON.stringify(response.memoryBytesUsed ?? null, null, 2)}
-                                </Box>
+                                <CollapsibleRawJson data={response.memoryBytesUsed} />
                             </Box>
 
                             <Box>
                                 <Typography sx={{ fontWeight: 700, mb: 1 }}>CPU (utilization)</Typography>
-                                <Typography variant='body2' color='text.secondary' sx={{ mb: 1, wordBreak: 'break-word' }}>
-                                    {cpuUrl}
-                                </Typography>
                                 {cpuChart && cpuChart.lines.length > 0 ? (
                                     <Box sx={{ mb: 2 }}>
                                         <LineChart<MonitoringMultiLineChartData>
@@ -720,6 +804,7 @@ export default function ModelResourceMonitoringTab() {
                                             charts={cpuChart.charts}
                                             colors={cpuChart.colors}
                                             lines={cpuChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_CPU}
                                             legend={MONITORING_CHART_LEGEND}
                                             grid={MONITORING_CHART_GRID}
                                             height={MONITORING_CHART_HEIGHT}
@@ -736,16 +821,75 @@ export default function ModelResourceMonitoringTab() {
                                         No CPU points parsed for a chart.
                                     </Typography>
                                 )}
-                                <Box component='pre' sx={jsonPreSx}>
-                                    {JSON.stringify(response.cpuUtilization ?? null, null, 2)}
-                                </Box>
+                                <CollapsibleRawJson data={response.cpuUtilization} />
+                            </Box>
+
+                            <Box>
+                                <Typography sx={{ fontWeight: 700, mb: 1 }}>
+                                    Accelerator duty cycle (online/accelerator/duty_cycle)
+                                </Typography>
+                                {acceleratorDutyCycleChart && acceleratorDutyCycleChart.lines.length > 0 ? (
+                                    <Box sx={{ mb: 2 }}>
+                                        <LineChart<MonitoringMultiLineChartData>
+                                            key={`accel-duty-${monitoringChartKey}`}
+                                            title='Accelerator duty cycle (percent)'
+                                            charts={acceleratorDutyCycleChart.charts}
+                                            colors={acceleratorDutyCycleChart.colors}
+                                            lines={acceleratorDutyCycleChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_ACCELERATOR_DUTY_CYCLE}
+                                            legend={MONITORING_CHART_LEGEND}
+                                            grid={MONITORING_CHART_GRID}
+                                            height={MONITORING_CHART_HEIGHT}
+                                            xAxis={monitoringChartXAxis}
+                                            chartValueFormatter={value => {
+                                                const y =
+                                                    Array.isArray(value) ? extractNumber(value[1]) : extractNumber(value);
+                                                return y === null ? '-' : y.toFixed(3);
+                                            }}
+                                        />
+                                    </Box>
+                                ) : (
+                                    <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                                        No accelerator duty cycle points parsed for a chart.
+                                    </Typography>
+                                )}
+                                <CollapsibleRawJson data={response.acceleratorDutyCycle} />
+                            </Box>
+
+                            <Box>
+                                <Typography sx={{ fontWeight: 700, mb: 1 }}>
+                                    Accelerator memory (online/accelerator/memory/bytes_used)
+                                </Typography>
+                                {acceleratorMemoryChart && acceleratorMemoryChart.lines.length > 0 ? (
+                                    <Box sx={{ mb: 2 }}>
+                                        <LineChart<MonitoringMultiLineChartData>
+                                            key={`accel-mem-${monitoringChartKey}`}
+                                            title='Accelerator memory used (GiB)'
+                                            charts={acceleratorMemoryChart.charts}
+                                            colors={acceleratorMemoryChart.colors}
+                                            lines={acceleratorMemoryChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_MEMORY}
+                                            legend={MONITORING_CHART_LEGEND}
+                                            grid={MONITORING_CHART_GRID}
+                                            height={MONITORING_CHART_HEIGHT}
+                                            xAxis={monitoringChartXAxis}
+                                            chartValueFormatter={value => {
+                                                const y =
+                                                    Array.isArray(value) ? extractNumber(value[1]) : extractNumber(value);
+                                                return y === null ? '-' : y.toFixed(3);
+                                            }}
+                                        />
+                                    </Box>
+                                ) : (
+                                    <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                                        No accelerator memory points parsed for a chart.
+                                    </Typography>
+                                )}
+                                <CollapsibleRawJson data={response.acceleratorMemoryBytes} />
                             </Box>
 
                             <Box>
                                 <Typography sx={{ fontWeight: 700, mb: 1 }}>Replicas (online/replicas)</Typography>
-                                <Typography variant='body2' color='text.secondary' sx={{ mb: 1, wordBreak: 'break-word' }}>
-                                    {replicasUrl}
-                                </Typography>
                                 {replicasChart && replicasChart.lines.length > 0 ? (
                                     <Box sx={{ mb: 2 }}>
                                         <LineChart<MonitoringMultiLineChartData>
@@ -754,6 +898,7 @@ export default function ModelResourceMonitoringTab() {
                                             charts={replicasChart.charts}
                                             colors={replicasChart.colors}
                                             lines={replicasChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_REPLICAS}
                                             legend={MONITORING_CHART_LEGEND}
                                             grid={MONITORING_CHART_GRID}
                                             height={MONITORING_CHART_HEIGHT}
@@ -770,16 +915,11 @@ export default function ModelResourceMonitoringTab() {
                                         No replica count points parsed for a chart.
                                     </Typography>
                                 )}
-                                <Box component='pre' sx={jsonPreSx}>
-                                    {JSON.stringify(response.replicas ?? null, null, 2)}
-                                </Box>
+                                <CollapsibleRawJson data={response.replicas} />
                             </Box>
 
                             <Box>
                                 <Typography sx={{ fontWeight: 700, mb: 1 }}>Target replicas (online/target_replicas)</Typography>
-                                <Typography variant='body2' color='text.secondary' sx={{ mb: 1, wordBreak: 'break-word' }}>
-                                    {targetReplicasUrl}
-                                </Typography>
                                 {targetReplicasChart && targetReplicasChart.lines.length > 0 ? (
                                     <Box sx={{ mb: 2 }}>
                                         <LineChart<MonitoringMultiLineChartData>
@@ -788,6 +928,7 @@ export default function ModelResourceMonitoringTab() {
                                             charts={targetReplicasChart.charts}
                                             colors={targetReplicasChart.colors}
                                             lines={targetReplicasChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_TARGET_REPLICAS}
                                             legend={MONITORING_CHART_LEGEND}
                                             grid={MONITORING_CHART_GRID}
                                             height={MONITORING_CHART_HEIGHT}
@@ -804,16 +945,11 @@ export default function ModelResourceMonitoringTab() {
                                         No target replica points parsed for a chart.
                                     </Typography>
                                 )}
-                                <Box component='pre' sx={jsonPreSx}>
-                                    {JSON.stringify(response.targetReplicas ?? null, null, 2)}
-                                </Box>
+                                <CollapsibleRawJson data={response.targetReplicas} />
                             </Box>
 
                             <Box>
                                 <Typography sx={{ fontWeight: 700, mb: 1 }}>Network received (received_bytes_count)</Typography>
-                                <Typography variant='body2' color='text.secondary' sx={{ mb: 1, wordBreak: 'break-word' }}>
-                                    {networkReceivedUrl}
-                                </Typography>
                                 {networkReceivedChart && networkReceivedChart.lines.length > 0 ? (
                                     <Box sx={{ mb: 2 }}>
                                         <LineChart<MonitoringMultiLineChartData>
@@ -822,6 +958,7 @@ export default function ModelResourceMonitoringTab() {
                                             charts={networkReceivedChart.charts}
                                             colors={networkReceivedChart.colors}
                                             lines={networkReceivedChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_NETWORK}
                                             legend={MONITORING_CHART_LEGEND}
                                             grid={MONITORING_CHART_GRID}
                                             height={MONITORING_CHART_HEIGHT}
@@ -838,16 +975,11 @@ export default function ModelResourceMonitoringTab() {
                                         No network received points parsed for a chart.
                                     </Typography>
                                 )}
-                                <Box component='pre' sx={jsonPreSx}>
-                                    {JSON.stringify(response.networkReceivedBytes ?? null, null, 2)}
-                                </Box>
+                                <CollapsibleRawJson data={response.networkReceivedBytes} />
                             </Box>
 
                             <Box>
                                 <Typography sx={{ fontWeight: 700, mb: 1 }}>Network sent (sent_bytes_count)</Typography>
-                                <Typography variant='body2' color='text.secondary' sx={{ mb: 1, wordBreak: 'break-word' }}>
-                                    {networkSentUrl}
-                                </Typography>
                                 {networkSentChart && networkSentChart.lines.length > 0 ? (
                                     <Box sx={{ mb: 2 }}>
                                         <LineChart<MonitoringMultiLineChartData>
@@ -856,6 +988,7 @@ export default function ModelResourceMonitoringTab() {
                                             charts={networkSentChart.charts}
                                             colors={networkSentChart.colors}
                                             lines={networkSentChart.lines}
+                                            yAxisLabels={Y_AXIS_LABEL_NETWORK}
                                             legend={MONITORING_CHART_LEGEND}
                                             grid={MONITORING_CHART_GRID}
                                             height={MONITORING_CHART_HEIGHT}
@@ -872,9 +1005,7 @@ export default function ModelResourceMonitoringTab() {
                                         No network sent points parsed for a chart.
                                     </Typography>
                                 )}
-                                <Box component='pre' sx={jsonPreSx}>
-                                    {JSON.stringify(response.networkSentBytes ?? null, null, 2)}
-                                </Box>
+                                <CollapsibleRawJson data={response.networkSentBytes} />
                             </Box>
                         </Box>
                     </Paper>
